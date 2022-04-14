@@ -221,7 +221,7 @@ class GradientDescent:
                 break
             # save the current cost in the oldCost variable
             oldCost = newCost
-        
+
         if opt is None:
             if size == 1:
                 opt = "Stochastic"
@@ -293,10 +293,14 @@ class GradientDescent:
         sigma_pseudo_inverse = np.zeros((vT.shape[0], vT.shape[0]))
 
         # getting the index of the first approximately zero singular value
-        zero_sigma_index= np.where(s <= zero_threshold)[0][0]
+        zero_sigma_index= np.where(s <= zero_threshold)
 
-        # 1/non-zero diagonal elements calculation
-        sigma_pseudo_inverse[:zero_sigma_index,:zero_sigma_index] = np.diag(1/s[ :zero_sigma_index])
+        if len(zero_sigma_index[0]) == 0:
+            sigma_pseudo_inverse[:,:] = np.diag(1/s[:])
+        else:
+            zero_sigma_index = zero_sigma_index[0][0]
+            # 1/non-zero diagonal elements calculation
+            sigma_pseudo_inverse[:zero_sigma_index,:zero_sigma_index] = np.diag(1/s[ :zero_sigma_index])
 
         # calculating the optimal coefficients
         optimal_coefficients = vT.T.dot(sigma_pseudo_inverse).dot(u.T).dot(Y)
