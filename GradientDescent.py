@@ -117,10 +117,10 @@ class GradientDescent:
 
 
     #------------------------------------------------#
-    def prepareData(self, opt=None):
+    def prepareData(self, opt=None, CF=False):
         # shuffle data
-#         np.random.shuffle(self.data)
-#         self.data.sample(frac=1)
+        # np.random.shuffle(self.data)
+        # self.data.sample(frac=1)
         # inital theta vector
         n = self.data.shape[1]
         x0 = np.zeros((n, 1))
@@ -130,6 +130,10 @@ class GradientDescent:
         X = np.c_[ones, self.data[:, :-1]]
         # true y value is the last column in the data
         Y = self.data[:, [-1]]
+
+        # return X with ones if solving with normal equation
+        if CF == True:
+            return X, Y
 
         # Momentum and Nestrov
         if opt == "mT" or opt == "NAG":
@@ -217,6 +221,14 @@ class GradientDescent:
                 break
             # save the current cost in the oldCost variable
             oldCost = newCost
+        
+        if opt is None:
+            if size == 1:
+                opt = "Stochastic"
+            elif size == self.data.shape[0]:
+                opt = "Batch GD"
+            else:
+                opt = "Mini Batch GD"
 
         plt_hX = self.hypo(x0, X)
         self.plot(opt, size, plt_hX)
@@ -256,7 +268,7 @@ class GradientDescent:
         plt.legend()
         plt.show();
         if opt is None:
-            opt = "Normal GD"
+            opt = "GD"
         score = self.r2_score()
         print("r2_score: ", score)
         print("Optimizer: ", opt)
@@ -268,3 +280,24 @@ class GradientDescent:
         if opt == "RMSP" or opt == "mT" or opt == "NAG":
             print(f"gamma: {self.gamma}")
         print("Optimal thetas values:\n", self.steps[-1]["theta"])
+
+    # normal equation
+    def linear_reg_SVD(self, zero_threshold = 1e-13, with_ones=False):
+        if with_ones == True:
+            X, Y = self.prepareData(CF=True)
+        else:
+            X, Y = self.data[:, :-1], self.data[:, [-1]]
+        u, s, vT = np.linalg.svd(X, full_matrices= False)
+
+        # Now initialize the "pseudo-"inverse of Sigma, where "pseudo" means "don't divide by zero"
+        sigma_pseudo_inverse = np.zeros((vT.shape[0], vT.shape[0]))
+
+        # getting the index of the first approximately zero singular value
+        zero_sigma_index= np.where(s <= zero_threshold)[0][0]
+
+        # 1/non-zero diagonal elements calculation
+        sigma_pseudo_inverse[:zero_sigma_index,:zero_sigma_index] = np.diag(1/s[ :zero_sigma_index])
+
+        # calculating the optimal coefficients
+        optimal_coefficients = vT.T.dot(sigma_pseudo_inverse).dot(u.T).dot(Y)
+        return optimal_coefficients
