@@ -1,9 +1,3 @@
-import numpy as np
-import pandas as pd
-
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 from scipy.stats import shapiro
 import statsmodels.api as sm
 
@@ -25,10 +19,12 @@ class EDA:
         self.skip = skip
 
     # grab numerical data
-    def grabNumeric(self, target=True):
+    def grabNumeric(self, target=True, skip=True):
         numCols = list(set(self.train_data.select_dtypes(include=self.numerics).columns) - set(["Id"]))
         if target == False:
             numCols.remove(self.target)
+        if self.skip is not None and skip == True:
+            numCols = list(set(numCols) - set(self.skip))
         return numCols
 
     # grab categorical data
@@ -83,6 +79,7 @@ class EDA:
             fig.tight_layout()
             fig.subplots_adjust(top=0.95)
 
+
         # count plot categorical data
         if plot == 'countplot' or plot is None:
             catCols = self.grabCategorical()
@@ -127,7 +124,9 @@ class EDA:
             fig.subplots_adjust(top=0.95)
 
     # define nulls
-    def grabNulls(self):
+    def grabNulls(self, threshold=None):
+        if threshold is not None:
+            self.null_threshold = threshold
         m = self.train_data.shape[0]
         null_df = self.train_data.isna().sum().reset_index().rename(columns={0: "Null Count"}).sort_values(by=['Null Count'], ascending=False)
         null_df = null_df[null_df["Null Count"] > 0]
@@ -141,8 +140,8 @@ class EDA:
 
         return CTBD, RTBD, RTBF
 
-    def handleNulls(self):
-        CTBD, RTBD, RTBF = self.grabNulls()
+    def handleNulls(self, threshold=None):
+        CTBD, RTBD, RTBF = self.grabNulls(threshold)
         # drop columns with nulls > threshold
         nCols = [s[0] for s in CTBD.values]
         self.train_data = self.train_data.drop(columns=nCols)
@@ -177,7 +176,9 @@ class EDA:
         self.train_data[catNull] = self.train_data[catNull].apply(lambda x: x.fillna(x.mode()[0]))
 
     # duplicated
-    def handleDuplicates(self):
+    def handleDuplicates(self, threshold=None):
+        if threshold is not None:
+            self.dup_threshold = threshold
         # rows, columns
         m, n = self.train_data.shape
         # list of columns with same value
@@ -195,7 +196,9 @@ class EDA:
         return dupCol
 
     # correlated features
-    def handleCorrFeature(self):
+    def handleCorrFeature(self, threshold=None):
+        if threshold is not None:
+            self.corr_threshold = threshold
         numCols = [c for c in self.train_data.columns.tolist() if c in self.grabNumeric()]
         CM = self.train_data[numCols].corr()
         # features to be deleted
@@ -237,16 +240,26 @@ class EDA:
         return redundantFeatures, corrValues
 
 
-    def checkOutliers(self):
+    def checkOutliers(self, threshold=1.5):
         numCols = [c for c in self.train_data.columns.tolist() if c in self.grabNumeric(target=False)]
+        # Q1 = self.train_data[numCols].quantile(.25)
+        # Q3 = self.train_data[numCols].quantile(.75)
+        # IQR = Q3 - Q1
+        # lower = Q1 - threshold * IQR
+        # upper = Q3 + threshold * IQR
+        # lt_lower = self.train_data.index[self.train_data[numCols] < lower]
+        # gt_upper = self.train_data.index[self.train_data[numCols] > lower]
+        # bounds = np.c_[lower, lt_lower.sum(), upper, gt_upper.sum()]
+        # outlier_df = pd.DataFrame(data=bounds, index=numCols, columns=['Lower Bound', 'Below Lower Count', 'Upper Bound', 'Above Upper Count'])
+        # return outlier_df
         # dict to hold outliers
         outliers = {}
         for c in self.train_data[numCols]:
             Q1 = self.train_data[c].quantile(.25)
             Q3 = self.train_data[c].quantile(.75)
             IQR = Q3 - Q1
-            lower = Q1 - 1.5 * IQR
-            upper = Q3 + 1.5 * IQR
+            lower = Q1 - threshold * IQR
+            upper = Q3 + threshold * IQR
             # grab rows < lower bound
             LO = self.train_data.index[self.train_data[c] < lower].tolist()
             # grab rows > upper bound
@@ -296,19 +309,19 @@ class EDA:
                 self.train_data.loc[col['Above Upper'], c] = col['Upper Bound']
 
     # check skewness
-    def calcSkew(self):
+    def calcSkew(self, target):
         n = self.train_data.shape[0]
-        numCols = self.grabNumeric(target=False)
+        numCols = self.grabNumeric(target=target)
         mu = self.train_data[numCols].mean()
         std = self.train_data[numCols].std()
-        skw = pd.DataFrame(np.sum(np.power((self.train_data[numCols] - mu), 3)) / ((n - 1) * std) ).rename(columns={0: "Skew Value"})
+        skw = pd.DataFrame(np.sum(np.power((self.train_data[numCols] - mu), 3)) / ((n - 1) * np.power(std, 3)) ).rename(columns={0: "Skew Value"})
         return skw
 
     # log transformation for skewed features
-    def handleSkew(self):
-        skw = self.calcSkew()
+    def handleSkew(self, target=False):
+        skw = self.calcSkew(target)
         for s in skw.index.tolist():
-            if skw.loc[s][0] > 1 or skw.loc[s][0] < -1:
+            if (skw.loc[s][0] > 1 or skw.loc[s][0] < -1) and skw.loc[s][0] >=0:
                 # aplly log transform to column with abs(skewness) > 1 (+, -)
                 self.train_data[s] = np.log(1 + abs(self.train_data[s]))
                 if self.test_data is not None:
@@ -349,8 +362,10 @@ class EDA:
         plt.show();
 
     # shapiro method
-    def checkDistribution(self):
-        numCols = self.grabNumeric(target=False)
+    def checkDistribution(self, threshold=None, target=True, skip=True):
+        if threshold is not None:
+            self.alpha = threshold
+        numCols = self.grabNumeric(target=target, skip=skip)
 
         # list for gaussianFeatures
         gaussianFeatures = []
@@ -358,11 +373,11 @@ class EDA:
         nonGaussianFeatures = []
         for c in numCols:
             # calc w and p Statistics for each column
-            w_stat, p = shapiro(self.train_data[c])
+            w_stat, p = shapiro(self.train_data[c].sample(n=500, replace=False))
             print('W_Statistic=%.3f, p=%.8f' % (w_stat, p))
 
             # if p > alpha add to gaussianFeatures
-            if p > self.alpha:
+            if p >= self.alpha:
                 print(f'{c} looks like gaussian (fail to reject H0)')
                 gaussianFeatures.append(c)
 
@@ -382,12 +397,16 @@ class EDA:
             stdScaler = StandardScaler()
             stdScaler = stdScaler.fit(self.train_data[gFeatures])
             self.train_data[gFeatures] = stdScaler.transform(self.train_data[gFeatures])
+            if self.test_data is not None:
+                self.test_data[gFeatures] = stdScaler.transform(self.test_data[gFeatures])
 
         # minmax scale non gausian features
         if len(nonGFeatures) > 0:
             mmScaler = MinMaxScaler()
             mmScaler = mmScaler.fit(self.train_data[nonGFeatures])
             self.train_data[nonGFeatures] = mmScaler.transform(self.train_data[nonGFeatures])
+            if self.test_data is not None:
+                self.test_data[nonGFeatures] = mmScaler.transform(self.test_data[nonGFeatures])
 
     #split data
     def trainTestSplit(self, test_size, random_state, include=None, exclude=None):
@@ -409,23 +428,24 @@ class EDA:
             yTrain = self.train_data[self.target]
             xTest = self.test_data[numCols]
             yTest = self.test_data[self.target]
+            # check gausian and non gausian features
+            gFeatures, nonGFeatures = self.checkDistribution()
+
+            if len(gFeatures) > 0:
+                stdScaler = StandardScaler()
+                stdScaler = stdScaler.fit(xTrain[gFeatures])
+                xTrain = stdScaler.transform(xTrain[gFeatures])
+                xTest = stdScaler.transform(xTest[gFeatures])
+
+            if len(nonGFeatures) > 0:
+                mmScaler = MinMaxScaler()
+                mmScaler = mmScaler.fit(xTrain[nonGFeatures])
+                xTrain = mmScaler.transform(xTrain[nonGFeatures])
+                xTest = mmScaler.transform(xTest[nonGFeatures])
+
         else:
             xTrain, xTest, yTrain, yTest = train_test_split(self.train_data[numCols],
                                                     self.train_data[self.target],
                                                     test_size=test_size, random_state=random_state)
-
-        # check gausian and non gausian features
-        gFeatures, nonGFeatures = self.checkDistribution()
-        if len(gFeatures) > 0:
-            stdScaler = StandardScaler()
-            stdScaler = stdScaler.fit(xTrain[gFeatures])
-            xTrain = stdScaler.transform(xTrain[gFeatures])
-            xTest = stdScaler.transform(xTest[gFeatures])
-
-        if len(nonGFeatures) > 0:
-            mmScaler = MinMaxScaler()
-            mmScaler = mmScaler.fit(xTrain[nonGFeatures])
-            xTrain = mmScaler.transform(xTrain[nonGFeatures])
-            xTest = mmScaler.transform(xTest[nonGFeatures])
 
         return xTrain, xTest, yTrain, yTest
